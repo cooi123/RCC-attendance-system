@@ -26,6 +26,9 @@ import { formatDateDisplay, formatTodayKey } from "@/lib/utils";
 
 const VISITOR_NAME_STORAGE_KEY = "RCC_Attendance:lastVisitorName";
 
+/** Public dir; prefix with BASE_URL so it works on GitHub Pages (/repo/). Use logo.png. */
+const LOGO_URL = `${import.meta.env.BASE_URL}logo.png`;
+
 
 function readStoredVisitorName(): string {
   try {
@@ -90,10 +93,10 @@ export function AttendancePage() {
         <div className="mx-auto flex max-w-lg items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <img
-              src="/logo.png"
+              src={LOGO_URL}
               alt=""
               className="h-9 w-auto shrink-0 object-contain"
-              width={120}
+              width={36}
               height={36}
             />
             <div className="min-w-0">
@@ -111,11 +114,11 @@ export function AttendancePage() {
       <main className="mx-auto max-w-lg px-4 pt-8">
         <div className="mb-8 flex flex-col items-center text-center">
           <img
-            src="/logo.png"
-            alt="Organization logo"
+            src={LOGO_URL}
+            alt="RCC"
             className="mb-6 h-24 w-auto max-w-[min(100%,14rem)] object-contain drop-shadow-sm sm:h-28"
-            width={180}
-            height={72}
+            width={112}
+            height={112}
           />
           <h1 className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
             Welcome!
