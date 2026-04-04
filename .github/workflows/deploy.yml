@@ -39,6 +39,8 @@ jobs:
       - name: Build Vite app
         env:
           VITE_CONVEX_URL: ${{ secrets.VITE_CONVEX_URL }}
+          # GitHub project pages need asset URLs under /<repo>/ (do not rely on env seen by Vite alone).
+          VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH }}
         run: npm run build
 
       - name: Setup Pages

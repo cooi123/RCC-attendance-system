@@ -14,10 +14,17 @@ if (!convexUrl) {
 
 const convex = new ConvexReactClient(convexUrl ?? "");
 
+/** Match Vite `base` (GitHub project pages use /repo-name/). */
+function routerBasename(): string {
+  const raw = import.meta.env.BASE_URL;
+  const trimmed = raw.endsWith("/") ? raw.slice(0, -1) : raw;
+  return trimmed === "" ? "/" : trimmed;
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ConvexProvider client={convex}>
-      <BrowserRouter>
+      <BrowserRouter basename={routerBasename()}>
         <App />
       </BrowserRouter>
     </ConvexProvider>
