@@ -32,7 +32,6 @@ jobs:
         run: npm ci
 
       - name: Deploy Convex backend
-        if: ${{ secrets.CONVEX_DEPLOY_KEY != '' }}
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: npx convex deploy
