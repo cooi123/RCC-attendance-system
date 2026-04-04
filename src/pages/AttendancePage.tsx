@@ -1,6 +1,6 @@
 import { useMutation } from "convex/react";
-import { CalendarDays, CheckCircle2, Smartphone } from "lucide-react";
-import { useEffect, useState } from "react";
+import { CalendarDays, CheckCircle2 } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertDialog,
