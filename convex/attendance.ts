@@ -110,6 +110,104 @@ export const checkInByName = mutation({
   },
 });
 
+const personCheckInRow = v.object({
+  _id: v.id("people"),
+  name: v.string(),
+  status: v.union(v.literal("visitor"), v.literal("member")),
+  checkedInToday: v.boolean(),
+});
+
+/** Public: roster for self check-in, with whether each person is already marked for `dateKey`. */
+export const listPeopleForPublicCheckIn = query({
+  args: { dateKey: v.string() },
+  returns: v.array(personCheckInRow),
+  handler: async (ctx, args) => {
+    if (!dateKeyRegex.test(args.dateKey)) {
+      throw new Error("Invalid date");
+    }
+    const people = await ctx.db.query("people").collect();
+    const attendanceToday = await ctx.db
+      .query("attendance")
+      .withIndex("by_date", (q) => q.eq("dateKey", args.dateKey))
+      .collect();
+    const presentSet = new Set(attendanceToday.map((a) => a.personId));
+    return people
+      .map((p) => ({
+        _id: p._id,
+        name: p.name,
+        status: p.status,
+        checkedInToday: presentSet.has(p._id),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  },
+});
+
+const checkInManyOk = v.object({
+  ok: v.literal(true),
+  checkedIn: v.array(
+    v.object({
+      personId: v.id("people"),
+      name: v.string(),
+    }),
+  ),
+  alreadyMarked: v.array(
+    v.object({
+      personId: v.id("people"),
+      name: v.string(),
+    }),
+  ),
+});
+
+/** Public: mark attendance for multiple existing people in one request (e.g. family). */
+export const checkInManyByPersonIds = mutation({
+  args: {
+    personIds: v.array(v.id("people")),
+    dateKey: v.string(),
+  },
+  returns: v.union(
+    checkInManyOk,
+    v.object({
+      ok: v.literal(false),
+      reason: v.union(v.literal("invalid_date"), v.literal("too_many")),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    if (!dateKeyRegex.test(args.dateKey)) {
+      return { ok: false as const, reason: "invalid_date" as const };
+    }
+    const unique = [...new Set(args.personIds)];
+    if (unique.length > 100) {
+      return { ok: false as const, reason: "too_many" as const };
+    }
+    const checkedIn: Array<{ personId: Id<"people">; name: string }> = [];
+    const alreadyMarked: Array<{ personId: Id<"people">; name: string }> = [];
+    const now = Date.now();
+    for (const personId of unique) {
+      const person = await ctx.db.get(personId);
+      if (!person) {
+        continue;
+      }
+      const existing = await ctx.db
+        .query("attendance")
+        .withIndex("by_person_and_date", (q) =>
+          q.eq("personId", personId).eq("dateKey", args.dateKey),
+        )
+        .first();
+      if (existing) {
+        alreadyMarked.push({ personId, name: person.name });
+      } else {
+        await ctx.db.insert("attendance", {
+          personId,
+          dateKey: args.dateKey,
+          markedAt: now,
+        });
+        checkedIn.push({ personId, name: person.name });
+      }
+    }
+    return { ok: true as const, checkedIn, alreadyMarked };
+  },
+});
+
 export const listAttendanceAdmin = query({
   args: {
     sessionToken: v.string(),
