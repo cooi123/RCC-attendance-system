@@ -108,6 +108,10 @@ export function AdminDashboardPage() {
   );
   const [rosterSearch, setRosterSearch] = useState("");
   const [pendingCell, setPendingCell] = useState<string | null>(null);
+  const [pendingStatusPersonId, setPendingStatusPersonId] =
+    useState<Id<"people"> | null>(null);
+  const [pendingTeamPersonId, setPendingTeamPersonId] =
+    useState<Id<"people"> | null>(null);
 
   const rosterDayKeys = useMemo(
     () => [sundayOfWeekFromMonday(weekMonday)],
@@ -127,6 +131,37 @@ export function AdminDashboardPage() {
   );
 
   const setAttendanceOverride = useMutation(api.attendance.setAttendanceOverride);
+
+  const thisWeekStats = useMemo(() => {
+    if (!rosterWeek || !people) {
+      return { memberAttending: 0, visitorAttending: 0 };
+    }
+    const statusByPersonId = new Map(people.map((p) => [p._id, p.status]));
+    let memberAttending = 0;
+    let visitorAttending = 0;
+
+    for (const row of rosterWeek.rows) {
+      const isAttending = row.present[0] ?? false;
+      if (!isAttending) continue;
+      const status = statusByPersonId.get(row.personId);
+      if (status === "visitor") {
+        visitorAttending += 1;
+      } else {
+        memberAttending += 1;
+      }
+    }
+
+    return { memberAttending, visitorAttending };
+  }, [people, rosterWeek]);
+
+  const personStatusById = useMemo(
+    () => new Map(people?.map((p) => [p._id, p.status]) ?? []),
+    [people],
+  );
+  const personById = useMemo(
+    () => new Map(people?.map((p) => [p._id, p]) ?? []),
+    [people],
+  );
 
   const [personDialogOpen, setPersonDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<Id<"people"> | null>(null);
@@ -276,6 +311,31 @@ export function AdminDashboardPage() {
       </header>
 
       <main className="mx-auto max-w-5xl px-4 pt-6">
+        <section className="mb-6 grid gap-3 sm:grid-cols-2">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardDescription>This week (Sunday)</CardDescription>
+              <CardTitle className="text-2xl">Members attending</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-3xl font-semibold">
+                {thisWeekStats.memberAttending}
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardDescription>This week (Sunday)</CardDescription>
+              <CardTitle className="text-2xl">Visitors attending</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-3xl font-semibold">
+                {thisWeekStats.visitorAttending}
+              </p>
+            </CardContent>
+          </Card>
+        </section>
+
         <Tabs defaultValue="people" className="w-full">
           <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto">
             <TabsTrigger value="people">People</TabsTrigger>
@@ -553,6 +613,7 @@ export function AdminDashboardPage() {
                             Name
                           </TableHead>
                           <TableHead className="min-w-[6rem]">Team</TableHead>
+                          <TableHead className="min-w-[8rem]">Status</TableHead>
                           {rosterDayKeys.map((dk) => (
                             <TableHead
                               key={dk}
@@ -579,7 +640,80 @@ export function AdminDashboardPage() {
                                 {r.name}
                               </TableCell>
                               <TableCell className="text-muted-foreground">
-                                {r.teamName ?? "—"}
+                                <Select
+                                  value={
+                                    personById.get(r.personId)?.teamId ??
+                                    "__none__"
+                                  }
+                                  onValueChange={(value) => {
+                                    if (!sessionToken) return;
+                                    const person = personById.get(r.personId);
+                                    if (!person) return;
+                                    const teamId =
+                                      value === "__none__"
+                                        ? undefined
+                                        : (value as Id<"teams">);
+                                    void (async () => {
+                                      setPendingTeamPersonId(r.personId);
+                                      try {
+                                        await updatePerson({
+                                          sessionToken,
+                                          personId: r.personId,
+                                          name: person.name,
+                                          teamId,
+                                          status: person.status,
+                                        });
+                                      } finally {
+                                        setPendingTeamPersonId(null);
+                                      }
+                                    })();
+                                  }}
+                                  disabled={pendingTeamPersonId === r.personId}
+                                >
+                                  <SelectTrigger className="h-8 w-[8.5rem]">
+                                    <SelectValue placeholder="No team" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">No team</SelectItem>
+                                    {teams.map((t) => (
+                                      <SelectItem key={t._id} value={t._id}>
+                                        {t.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </TableCell>
+                              <TableCell>
+                                <Select
+                                  value={
+                                    personStatusById.get(r.personId) ?? "member"
+                                  }
+                                  onValueChange={(value) => {
+                                    if (!sessionToken) return;
+                                    const status = value as "member" | "visitor";
+                                    void (async () => {
+                                      setPendingStatusPersonId(r.personId);
+                                      try {
+                                        await setPersonStatus({
+                                          sessionToken,
+                                          personId: r.personId,
+                                          status,
+                                        });
+                                      } finally {
+                                        setPendingStatusPersonId(null);
+                                      }
+                                    })();
+                                  }}
+                                  disabled={pendingStatusPersonId === r.personId}
+                                >
+                                  <SelectTrigger className="h-8 w-[7.5rem]">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="member">Member</SelectItem>
+                                    <SelectItem value="visitor">Visitor</SelectItem>
+                                  </SelectContent>
+                                </Select>
                               </TableCell>
                               {rosterDayKeys.map((dk, i) => {
                                 const present = r.present[i] ?? false;
