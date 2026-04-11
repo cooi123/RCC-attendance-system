@@ -36,6 +36,11 @@ jobs:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: npx convex deploy
 
+      - name: Run Convex migrations
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: npx convex run migrations:runAll --prod
+
       - name: Build Vite app
         env:
           VITE_CONVEX_URL: ${{ secrets.VITE_CONVEX_URL }}
