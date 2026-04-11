@@ -28,7 +28,7 @@ export function TodayStats({ sessionToken }: Props) {
     const newVisitors: string[] = [];
 
     for (const row of todayRoster.rows) {
-      const isPresent = row.dayStatus?.[0] === "present" || row.present?.[0] === true;
+      const isPresent = row.dayStatus?.[0] === "present";
       if (!isPresent) continue;
       const status = statusById.get(row.personId);
       if (status === "NV") {

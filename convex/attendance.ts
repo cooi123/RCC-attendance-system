@@ -314,10 +314,6 @@ export const listAttendanceAdmin = query({
   },
 });
 
-function ordinalDayUtc(dateKey: string): number {
-  const [y, m, d] = dateKey.split("-").map(Number);
-  return Date.UTC(y, m - 1, d) / 86400000;
-}
 
 /** Roster with per-day attendance status for each date in dayKeys (admin). Days can be any dates (need not be consecutive). */
 export const listRosterWeekAttendanceAdmin = query({

@@ -122,21 +122,6 @@ export function AttendancePage() {
     setErrorMsg(null);
   };
 
-  const selectAllFiltered = () => {
-    const allSelected =
-      filteredPeople.length > 0 &&
-      filteredPeople.every((p) => selectedIds.has(p._id));
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (allSelected) {
-        for (const p of filteredPeople) next.delete(p._id);
-      } else {
-        for (const p of filteredPeople) next.add(p._id);
-      }
-      return next;
-    });
-    setErrorMsg(null);
-  };
 
   async function handleMarkHere() {
     setErrorMsg(null);
