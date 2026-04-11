@@ -76,4 +76,24 @@ export function shortDateLabel(dateKey: string): string {
   });
 }
 
+/** Shift by `delta` whole months (lands on the 1st of the target month). */
+export function addCalendarMonths(dateKey: string, delta: number): string {
+  const [y, m] = dateKey.split("-").map(Number);
+  if (!y || !m) return dateKey;
+  const dt = new Date(y, m - 1 + delta, 1);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  return `${yy}-${mm}-01`;
+}
+
+/** E.g. "April 2026" for a date key. */
+export function monthLabel(dateKey: string): string {
+  const [y, m] = dateKey.split("-").map(Number);
+  if (!y || !m) return dateKey;
+  return new Date(y, m - 1, 1).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+}
+
 export const SESSION_KEY = "attendance_admin_session";

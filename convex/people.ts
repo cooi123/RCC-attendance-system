@@ -1,12 +1,30 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { allocateUniqueCheckInToken } from "./lib/checkInToken";
+import { buildStoredName, personDisplayName } from "./lib/personDisplay";
+import { personGender, personRosterStatus } from "./lib/personModel";
 import { requireAdminSession } from "./lib/adminSession";
+
+function genderForApi(
+  stored: "female" | "male" | undefined,
+): "female" | "male" {
+  return stored === "female" ? "female" : "male";
+}
+
+/** Normalise legacy "visitor"/"member" status values from pre-migration rows. */
+function statusForApi(
+  stored: string,
+): "M" | "M_U18" | "NV" | "RV" | "VO" {
+  if (stored === "member") return "M";
+  if (stored === "visitor") return "NV";
+  return stored as "M" | "M_U18" | "NV" | "RV" | "VO";
+}
 
 const personPublic = v.object({
   _id: v.id("people"),
   name: v.string(),
-  status: v.union(v.literal("visitor"), v.literal("member")),
+  status: personRosterStatus,
 });
 
 export const listPeoplePublic = query({
@@ -17,8 +35,8 @@ export const listPeoplePublic = query({
     return people
       .map((p) => ({
         _id: p._id,
-        name: p.name,
-        status: p.status,
+        name: personDisplayName(p),
+        status: statusForApi(p.status),
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   },
@@ -30,9 +48,13 @@ export const listPeopleAdmin = query({
     v.object({
       _id: v.id("people"),
       name: v.string(),
+      displayName: v.string(),
+      givenName: v.string(),
+      surname: v.string(),
+      gender: personGender,
       teamId: v.optional(v.id("teams")),
       teamName: v.optional(v.string()),
-      status: v.union(v.literal("visitor"), v.literal("member")),
+      status: personRosterStatus,
       createdAt: v.number(),
     }),
   ),
@@ -45,29 +67,39 @@ export const listPeopleAdmin = query({
       .map((p) => ({
         _id: p._id,
         name: p.name,
+        displayName: personDisplayName(p),
+        givenName: p.givenName ?? "",
+        surname: p.surname ?? "",
+        gender: genderForApi(p.gender),
         teamId: p.teamId,
         teamName: p.teamId ? teamById.get(p.teamId) : undefined,
-        status: p.status,
+        status: statusForApi(p.status),
         createdAt: p.createdAt,
       }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
   },
 });
 
 export const createPerson = mutation({
   args: {
     sessionToken: v.string(),
-    name: v.string(),
+    givenName: v.string(),
+    surname: v.string(),
+    gender: personGender,
     teamId: v.optional(v.id("teams")),
-    status: v.union(v.literal("visitor"), v.literal("member")),
+    status: personRosterStatus,
   },
   returns: v.id("people"),
   handler: async (ctx, args) => {
     await requireAdminSession(ctx, args.sessionToken);
-    const name = args.name.trim();
-    if (name.length === 0) throw new Error("Name is required");
+    const name = buildStoredName(args.givenName, args.surname);
+    const givenName = args.givenName.trim();
+    const surname = args.surname.trim();
     return await ctx.db.insert("people", {
       name,
+      givenName,
+      surname,
+      gender: args.gender,
       teamId: args.teamId,
       status: args.status,
       createdAt: Date.now(),
@@ -75,21 +107,141 @@ export const createPerson = mutation({
   },
 });
 
+const importMemberRow = v.object({
+  line: v.number(),
+  givenName: v.string(),
+  surname: v.string(),
+  gender: v.optional(v.string()),
+  teamName: v.optional(v.string()),
+  status: v.optional(v.string()),
+});
+
+function normalizeImportGender(raw: string | undefined): "female" | "male" {
+  const s = (raw ?? "").trim().toLowerCase();
+  if (
+    s === "f" ||
+    s === "female" ||
+    s === "woman" ||
+    s === "girl"
+  ) {
+    return "female";
+  }
+  return "male";
+}
+
+function normalizeImportStatus(
+  raw: string | undefined,
+): "M" | "M_U18" | "NV" | "RV" | "VO" {
+  const s = (raw ?? "").trim().toUpperCase().replace(/-/g, "_").replace(/\s+/g, "_");
+  if (!s || s === "MEMBER") return "M";
+  if (s === "MU18" || s === "M_U18") return "M_U18";
+  if (s === "M") return "M";
+  if (s === "NV") return "NV";
+  if (s === "RV") return "RV";
+  if (s === "VO") return "VO";
+  return "M";
+}
+
+/** Bulk-create people from CSV-parsed rows (max 200 per call). */
+export const importMembers = mutation({
+  args: {
+    sessionToken: v.string(),
+    members: v.array(importMemberRow),
+  },
+  returns: v.object({
+    created: v.number(),
+    failed: v.array(
+      v.object({
+        line: v.number(),
+        message: v.string(),
+      }),
+    ),
+    warnings: v.array(
+      v.object({
+        line: v.number(),
+        message: v.string(),
+      }),
+    ),
+  }),
+  handler: async (ctx, args) => {
+    await requireAdminSession(ctx, args.sessionToken);
+    if (args.members.length > 200) {
+      throw new Error("At most 200 rows per import batch");
+    }
+    const teams = await ctx.db.query("teams").collect();
+    const teamByLower = new Map(
+      teams.map((t) => [t.name.trim().toLowerCase(), t._id]),
+    );
+
+    const failed: { line: number; message: string }[] = [];
+    const warnings: { line: number; message: string }[] = [];
+    let created = 0;
+
+    for (const m of args.members) {
+      const givenName = m.givenName.trim();
+      if (!givenName) {
+        failed.push({ line: m.line, message: "Given name is required" });
+        continue;
+      }
+      const surname = (m.surname ?? "").trim();
+      try {
+        const name = buildStoredName(givenName, surname);
+        const gender = normalizeImportGender(m.gender);
+        const status = normalizeImportStatus(m.status);
+        let teamId: Id<"teams"> | undefined;
+        const teamRaw = m.teamName?.trim();
+        if (teamRaw) {
+          const tid = teamByLower.get(teamRaw.toLowerCase());
+          if (tid) {
+            teamId = tid;
+          } else {
+            warnings.push({
+              line: m.line,
+              message: `Cell group "${teamRaw}" not found; person added without a cell group.`,
+            });
+          }
+        }
+        await ctx.db.insert("people", {
+          name,
+          givenName,
+          surname,
+          gender,
+          teamId,
+          status,
+          createdAt: Date.now(),
+        });
+        created += 1;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Could not create person";
+        failed.push({ line: m.line, message: msg });
+      }
+    }
+
+    return { created, failed, warnings };
+  },
+});
+
 export const updatePerson = mutation({
   args: {
     sessionToken: v.string(),
     personId: v.id("people"),
-    name: v.string(),
+    givenName: v.string(),
+    surname: v.string(),
+    gender: personGender,
     teamId: v.optional(v.id("teams")),
-    status: v.union(v.literal("visitor"), v.literal("member")),
+    status: personRosterStatus,
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAdminSession(ctx, args.sessionToken);
-    const name = args.name.trim();
-    if (name.length === 0) throw new Error("Name is required");
+    const name = buildStoredName(args.givenName, args.surname);
+    const givenName = args.givenName.trim();
+    const surname = args.surname.trim();
     await ctx.db.patch(args.personId, {
       name,
+      givenName,
+      surname,
+      gender: args.gender,
       teamId: args.teamId,
       status: args.status,
     });
@@ -118,7 +270,7 @@ export const setPersonStatus = mutation({
   args: {
     sessionToken: v.string(),
     personId: v.id("people"),
-    status: v.union(v.literal("visitor"), v.literal("member")),
+    status: personRosterStatus,
   },
   returns: v.null(),
   handler: async (ctx, args) => {

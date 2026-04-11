@@ -85,7 +85,7 @@ export function AdminLoginPage() {
             <CardDescription>
               {isBootstrap
                 ? "No admin exists yet. Create the first account (username and password are stored securely)."
-                : "Sign in to manage people, teams, and attendance."}
+                : "Sign in to manage people, cell groups, and attendance."}
             </CardDescription>
           </CardHeader>
           <CardContent>

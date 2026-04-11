@@ -1,9 +1,53 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
+import {
+  normalizedDisplayName,
+  personDisplayName,
+} from "./lib/personDisplay";
+import { personRosterStatus } from "./lib/personModel";
+
+/** Normalise legacy "visitor"/"member" status values from pre-migration rows. */
+function statusForApi(
+  stored: string,
+): "M" | "M_U18" | "NV" | "RV" | "VO" {
+  if (stored === "member") return "M";
+  if (stored === "visitor") return "NV";
+  return stored as "M" | "M_U18" | "NV" | "RV" | "VO";
+}
 import { requireAdminSession } from "./lib/adminSession";
 
 const dateKeyRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+const attendanceKindInDb = v.union(
+  v.literal("present"),
+  v.literal("sick"),
+  v.literal("holiday"),
+  v.literal("work"),
+  v.literal("other"),
+  v.literal("unexcused"),
+);
+
+/** Single-day status for API responses (no row, present, or absence). */
+const attendanceDayStatus = v.union(
+  v.literal("none"),
+  attendanceKindInDb,
+);
+
+/** Resolved attendance row kind (legacy rows omit `kind` → present). */
+type AttendanceKindResolved = NonNullable<Doc<"attendance">["kind"]>;
+
+function recordKind(row: Doc<"attendance">): AttendanceKindResolved {
+  return row.kind ?? "present";
+}
+
+function dayStatusFromRow(
+  row: Doc<"attendance"> | undefined,
+): "none" | NonNullable<Doc<"attendance">["kind"]> {
+  if (!row) return "none";
+  const k = recordKind(row);
+  return k;
+}
 
 export const markAttendance = mutation({
   args: {
@@ -42,6 +86,7 @@ export const markAttendance = mutation({
       personId: args.personId,
       dateKey: args.dateKey,
       markedAt: Date.now(),
+      kind: "present",
     });
     return { ok: true as const };
   },
@@ -77,9 +122,7 @@ export const checkInByName = mutation({
     }
     const lower = trimmed.toLowerCase();
     const everyone = await ctx.db.query("people").collect();
-    const existing = everyone.find(
-      (p) => p.name.trim().toLowerCase() === lower,
-    );
+    const existing = everyone.find((p) => normalizedDisplayName(p) === lower);
     let personId: Id<"people">;
     let createdProfile = false;
     if (existing) {
@@ -87,7 +130,10 @@ export const checkInByName = mutation({
     } else {
       personId = await ctx.db.insert("people", {
         name: trimmed,
-        status: "visitor",
+        givenName: trimmed,
+        surname: "",
+        gender: "male",
+        status: "NV",
         createdAt: Date.now(),
       });
       createdProfile = true;
@@ -105,6 +151,7 @@ export const checkInByName = mutation({
       personId,
       dateKey: args.dateKey,
       markedAt: Date.now(),
+      kind: "present",
     });
     return { ok: true as const, createdProfile };
   },
@@ -113,11 +160,11 @@ export const checkInByName = mutation({
 const personCheckInRow = v.object({
   _id: v.id("people"),
   name: v.string(),
-  status: v.union(v.literal("visitor"), v.literal("member")),
-  checkedInToday: v.boolean(),
+  status: personRosterStatus,
+  attendanceToday: attendanceDayStatus,
 });
 
-/** Public: roster for self check-in, with whether each person is already marked for `dateKey`. */
+/** Public: roster for self check-in, with attendance state for `dateKey`. */
 export const listPeopleForPublicCheckIn = query({
   args: { dateKey: v.string() },
   returns: v.array(personCheckInRow),
@@ -130,13 +177,16 @@ export const listPeopleForPublicCheckIn = query({
       .query("attendance")
       .withIndex("by_date", (q) => q.eq("dateKey", args.dateKey))
       .collect();
-    const presentSet = new Set(attendanceToday.map((a) => a.personId));
+    const statusByPerson = new Map<Id<"people">, Doc<"attendance">>();
+    for (const a of attendanceToday) {
+      statusByPerson.set(a.personId, a);
+    }
     return people
       .map((p) => ({
         _id: p._id,
-        name: p.name,
-        status: p.status,
-        checkedInToday: presentSet.has(p._id),
+        name: personDisplayName(p),
+        status: statusForApi(p.status),
+        attendanceToday: dayStatusFromRow(statusByPerson.get(p._id)),
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   },
@@ -194,14 +244,18 @@ export const checkInManyByPersonIds = mutation({
         )
         .first();
       if (existing) {
-        alreadyMarked.push({ personId, name: person.name });
+        alreadyMarked.push({
+          personId,
+          name: personDisplayName(person),
+        });
       } else {
         await ctx.db.insert("attendance", {
           personId,
           dateKey: args.dateKey,
           markedAt: now,
+          kind: "present",
         });
-        checkedIn.push({ personId, name: person.name });
+        checkedIn.push({ personId, name: personDisplayName(person) });
       }
     }
     return { ok: true as const, checkedIn, alreadyMarked };
@@ -222,6 +276,8 @@ export const listAttendanceAdmin = query({
       teamName: v.optional(v.string()),
       dateKey: v.string(),
       markedAt: v.number(),
+      kind: attendanceKindInDb,
+      absenceNote: v.optional(v.string()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -247,10 +303,12 @@ export const listAttendanceAdmin = query({
       return {
         _id: r._id,
         personId: r.personId,
-        personName: p?.name ?? "Unknown",
+        personName: p ? personDisplayName(p) : "Unknown",
         teamName: p?.teamId ? teamMap.get(p.teamId) : undefined,
         dateKey: r.dateKey,
         markedAt: r.markedAt,
+        kind: recordKind(r),
+        absenceNote: r.absenceNote,
       };
     });
   },
@@ -261,7 +319,7 @@ function ordinalDayUtc(dateKey: string): number {
   return Date.UTC(y, m - 1, d) / 86400000;
 }
 
-/** Roster with present/absent for each date in dayKeys (admin). Dates must be consecutive when more than one. */
+/** Roster with per-day attendance status for each date in dayKeys (admin). Days can be any dates (need not be consecutive). */
 export const listRosterWeekAttendanceAdmin = query({
   args: {
     sessionToken: v.string(),
@@ -273,7 +331,7 @@ export const listRosterWeekAttendanceAdmin = query({
         personId: v.id("people"),
         name: v.string(),
         teamName: v.optional(v.string()),
-        present: v.array(v.boolean()),
+        dayStatus: v.array(attendanceDayStatus),
       }),
     ),
   }),
@@ -287,35 +345,33 @@ export const listRosterWeekAttendanceAdmin = query({
         throw new Error("Invalid date");
       }
     }
-    const ordinals = args.dayKeys.map((k) => ordinalDayUtc(k));
-    for (let i = 1; i < args.dayKeys.length; i++) {
-      if (ordinals[i]! - ordinals[i - 1]! !== 1) {
-        throw new Error("Days must be consecutive");
-      }
-    }
 
     const people = await ctx.db.query("people").collect();
     const teams = await ctx.db.query("teams").collect();
     const teamById = new Map(teams.map((t) => [t._id, t.name]));
 
-    const presentSet = new Set<string>();
+    const statusByPersonDay = new Map<string, Doc<"attendance">>();
     for (const dk of args.dayKeys) {
       const dayRows = await ctx.db
         .query("attendance")
         .withIndex("by_date", (q) => q.eq("dateKey", dk))
         .collect();
       for (const r of dayRows) {
-        presentSet.add(`${r.personId}|${dk}`);
+        statusByPersonDay.set(`${r.personId}|${dk}`, r);
       }
     }
 
     const rows = people
-      .sort((a, b) => a.name.localeCompare(b.name))
+      .sort((a, b) =>
+        personDisplayName(a).localeCompare(personDisplayName(b)),
+      )
       .map((p) => ({
         personId: p._id,
-        name: p.name,
+        name: personDisplayName(p),
         teamName: p.teamId ? teamById.get(p.teamId) : undefined,
-        present: args.dayKeys.map((dk) => presentSet.has(`${p._id}|${dk}`)),
+        dayStatus: args.dayKeys.map((dk) =>
+          dayStatusFromRow(statusByPersonDay.get(`${p._id}|${dk}`)),
+        ),
       }));
 
     return { rows };
@@ -327,7 +383,16 @@ export const setAttendanceOverride = mutation({
     sessionToken: v.string(),
     personId: v.id("people"),
     dateKey: v.string(),
-    present: v.boolean(),
+    status: v.union(
+      v.literal("present"),
+      v.literal("clear"),
+      v.literal("sick"),
+      v.literal("holiday"),
+      v.literal("work"),
+      v.literal("other"),
+      v.literal("unexcused"),
+    ),
+    absenceNote: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -345,16 +410,55 @@ export const setAttendanceOverride = mutation({
         q.eq("personId", args.personId).eq("dateKey", args.dateKey),
       )
       .first();
-    if (args.present) {
-      if (!existing) {
-        await ctx.db.insert("attendance", {
-          personId: args.personId,
-          dateKey: args.dateKey,
-          markedAt: Date.now(),
-        });
+
+    if (args.status === "clear") {
+      if (existing) {
+        await ctx.db.delete(existing._id);
       }
-    } else if (existing) {
-      await ctx.db.delete(existing._id);
+      return null;
+    }
+
+    const now = Date.now();
+    const trimmedNote = args.absenceNote?.trim();
+    const note =
+      args.status === "other" && trimmedNote && trimmedNote.length > 0
+        ? trimmedNote.slice(0, 500)
+        : undefined;
+
+    if (args.status === "present") {
+      const doc = {
+        personId: args.personId,
+        dateKey: args.dateKey,
+        markedAt: now,
+        kind: "present" as const,
+      };
+      if (existing) {
+        await ctx.db.replace(existing._id, doc);
+      } else {
+        await ctx.db.insert("attendance", doc);
+      }
+      return null;
+    }
+
+    const absentDoc =
+      note !== undefined
+        ? {
+            personId: args.personId,
+            dateKey: args.dateKey,
+            markedAt: now,
+            kind: args.status,
+            absenceNote: note,
+          }
+        : {
+            personId: args.personId,
+            dateKey: args.dateKey,
+            markedAt: now,
+            kind: args.status,
+          };
+    if (existing) {
+      await ctx.db.replace(existing._id, absentDoc);
+    } else {
+      await ctx.db.insert("attendance", absentDoc);
     }
     return null;
   },
