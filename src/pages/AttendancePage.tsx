@@ -80,13 +80,39 @@ export function AttendancePage() {
   const filteredPeople = useMemo(() => {
     if (!peopleForCheckIn) return [];
     const q = listFilter.trim().toLowerCase();
+    const getNameParts = (name: string) => {
+      const parts = name.toLowerCase().trim().split(/\s+/);
+      return {
+        first: parts[0] ?? "",
+        last: parts[parts.length - 1] ?? "",
+      };
+    };
     const people = q
-      ? peopleForCheckIn.filter((p) => p.name.toLowerCase().includes(q))
-      : peopleForCheckIn;
+      ? peopleForCheckIn.filter((p) => {
+          const { first, last } = getNameParts(p.name);
+          return first.startsWith(q) || last.startsWith(q);
+        })
+      : []
     return [...people].sort((a, b) => {
       const aSelected = selectedIds.has(a._id) ? 0 : 1;
       const bSelected = selectedIds.has(b._id) ? 0 : 1;
-      return aSelected - bSelected;
+      if (aSelected !== bSelected) return aSelected - bSelected;
+
+      const aName = getNameParts(a.name);
+      const bName = getNameParts(b.name);
+
+      const aMatchRank = aName.first.startsWith(q) ? 0 : 1;
+      const bMatchRank = bName.first.startsWith(q) ? 0 : 1;
+      if (aMatchRank !== bMatchRank) return aMatchRank - bMatchRank;
+
+      const aFirst = aName.first;
+      const bFirst = bName.first;
+      const firstCompare = aFirst.localeCompare(bFirst);
+      if (firstCompare !== 0) return firstCompare;
+
+      const aLast = aName.last;
+      const bLast = bName.last;
+      return aLast.localeCompare(bLast);
     });
   }, [peopleForCheckIn, listFilter, selectedIds]);
 
