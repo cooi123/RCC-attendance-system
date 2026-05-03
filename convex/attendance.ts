@@ -6,6 +6,11 @@ import {
   personDisplayName,
 } from "./lib/personDisplay";
 import { personRosterStatus } from "./lib/personModel";
+import { requireAdminSession } from "./lib/adminSession";
+import {
+  normalizeVisitorVisitDetails,
+  visitorVisitDetailsValue,
+} from "./lib/visitorVisitDetails";
 
 /** Normalise legacy "visitor"/"member" status values from pre-migration rows. */
 function statusForApi(
@@ -15,7 +20,6 @@ function statusForApi(
   if (stored === "visitor") return "NV";
   return stored as "M" | "M_U18" | "NV" | "RV" | "VO";
 }
-import { requireAdminSession } from "./lib/adminSession";
 
 const dateKeyRegex = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -278,6 +282,7 @@ export const listAttendanceAdmin = query({
       markedAt: v.number(),
       kind: attendanceKindInDb,
       absenceNote: v.optional(v.string()),
+      visitorVisitDetails: v.optional(visitorVisitDetailsValue),
     }),
   ),
   handler: async (ctx, args) => {
@@ -309,6 +314,7 @@ export const listAttendanceAdmin = query({
         markedAt: r.markedAt,
         kind: recordKind(r),
         absenceNote: r.absenceNote,
+        visitorVisitDetails: r.visitorVisitDetails,
       };
     });
   },
@@ -389,6 +395,7 @@ export const setAttendanceOverride = mutation({
       v.literal("unexcused"),
     ),
     absenceNote: v.optional(v.string()),
+    visitorVisitDetails: v.optional(visitorVisitDetailsValue),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -422,12 +429,29 @@ export const setAttendanceOverride = mutation({
         : undefined;
 
     if (args.status === "present") {
-      const doc = {
-        personId: args.personId,
-        dateKey: args.dateKey,
-        markedAt: now,
-        kind: "present" as const,
-      };
+      const normalizedDetails = normalizeVisitorVisitDetails(
+        args.visitorVisitDetails,
+      );
+      const visitorVisitDetails =
+        normalizedDetails !== undefined
+          ? normalizedDetails
+          : existing?.visitorVisitDetails;
+
+      const doc =
+        visitorVisitDetails !== undefined
+          ? {
+              personId: args.personId,
+              dateKey: args.dateKey,
+              markedAt: now,
+              kind: "present" as const,
+              visitorVisitDetails,
+            }
+          : {
+              personId: args.personId,
+              dateKey: args.dateKey,
+              markedAt: now,
+              kind: "present" as const,
+            };
       if (existing) {
         await ctx.db.replace(existing._id, doc);
       } else {

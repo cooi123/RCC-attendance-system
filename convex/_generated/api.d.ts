@@ -14,12 +14,16 @@ import type * as lib_adminSession from "../lib/adminSession.js";
 import type * as lib_checkInToken from "../lib/checkInToken.js";
 import type * as lib_personDisplay from "../lib/personDisplay.js";
 import type * as lib_personModel from "../lib/personModel.js";
+import type * as lib_visitorChecklist from "../lib/visitorChecklist.js";
+import type * as lib_visitorContact from "../lib/visitorContact.js";
+import type * as lib_visitorVisitDetails from "../lib/visitorVisitDetails.js";
 import type * as migrations from "../migrations.js";
 import type * as nodeAuth from "../nodeAuth.js";
 import type * as people from "../people.js";
 import type * as sessions from "../sessions.js";
 import type * as setup from "../setup.js";
 import type * as teams from "../teams.js";
+import type * as visitors from "../visitors.js";
 
 import type {
   ApiFromModules,
@@ -34,12 +38,16 @@ declare const fullApi: ApiFromModules<{
   "lib/checkInToken": typeof lib_checkInToken;
   "lib/personDisplay": typeof lib_personDisplay;
   "lib/personModel": typeof lib_personModel;
+  "lib/visitorChecklist": typeof lib_visitorChecklist;
+  "lib/visitorContact": typeof lib_visitorContact;
+  "lib/visitorVisitDetails": typeof lib_visitorVisitDetails;
   migrations: typeof migrations;
   nodeAuth: typeof nodeAuth;
   people: typeof people;
   sessions: typeof sessions;
   setup: typeof setup;
   teams: typeof teams;
+  visitors: typeof visitors;
 }>;
 
 /**

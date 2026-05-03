@@ -275,8 +275,14 @@ export function AttendancePage() {
                   </p>
                 ) : peopleForCheckIn.length === 0 ? (
                   <p className="px-3 py-4 text-sm text-muted-foreground">
-                    No names on the roster yet. If you are a new visitor,
-                    please reach out to a welcomer.
+                    No names on the roster yet. New visitors can{" "}
+                    <Link
+                      to="/visitor"
+                      className="font-medium text-primary underline-offset-4 hover:underline"
+                    >
+                      register online
+                    </Link>{" "}
+                    or speak to a welcomer.
                   </p>
                 ) : filteredPeople.length === 0 ? (
                   <p className="px-3 py-4 text-sm text-muted-foreground">
@@ -314,8 +320,15 @@ export function AttendancePage() {
             </div>
 
             <p className="rounded-lg border border-border/80 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-              If you are a new visitor or don&apos;t see your name on the
-              list, please reach out to the welcome team.
+              If you are a new visitor or don&apos;t see your name on the list,
+              you can{" "}
+              <Link
+                to="/visitor"
+                className="font-medium text-primary underline-offset-4 hover:underline"
+              >
+                register here
+              </Link>{" "}
+              or speak to the welcome team.
             </p>
 
             {errorMsg ? (

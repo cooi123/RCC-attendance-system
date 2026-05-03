@@ -10,6 +10,7 @@ import { AttendanceTab } from "./admin-tabs/AttendanceTab";
 import { PeopleTab } from "./admin-tabs/PeopleTab";
 import { TeamsTab } from "./admin-tabs/TeamsTab";
 import { TodayStats } from "./admin-tabs/TodayStats";
+import { VisitorsTab } from "./admin-tabs/VisitorsTab";
 
 export function AdminDashboardPage() {
   const navigate = useNavigate();
@@ -45,7 +46,7 @@ export function AdminDashboardPage() {
           <div>
             <h1 className="text-lg font-semibold">Helper dashboard</h1>
             <p className="text-xs text-muted-foreground">
-              People, cell groups, attendance
+              People, visitors, cell groups, attendance
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -63,13 +64,15 @@ export function AdminDashboardPage() {
       <main className="mx-auto max-w-5xl px-4 pt-6">
         <TodayStats sessionToken={sessionToken} />
         <Tabs defaultValue="people" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 sm:inline-flex sm:w-auto">
             <TabsTrigger value="people">People</TabsTrigger>
+            <TabsTrigger value="visitors">Visitors</TabsTrigger>
             <TabsTrigger value="teams">Cell groups</TabsTrigger>
             <TabsTrigger value="attendance">Attendance</TabsTrigger>
           </TabsList>
 
           <PeopleTab sessionToken={sessionToken} />
+          <VisitorsTab sessionToken={sessionToken} />
           <TeamsTab sessionToken={sessionToken} />
           <AttendanceTab sessionToken={sessionToken} />
         </Tabs>

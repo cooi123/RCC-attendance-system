@@ -56,6 +56,11 @@ export const listPeopleAdmin = query({
       teamName: v.optional(v.string()),
       status: personRosterStatus,
       createdAt: v.number(),
+      phone: v.optional(v.string()),
+      email: v.optional(v.string()),
+      suburb: v.optional(v.string()),
+      contactByEmail: v.boolean(),
+      contactByPhone: v.boolean(),
     }),
   ),
   handler: async (ctx, args) => {
@@ -63,19 +68,31 @@ export const listPeopleAdmin = query({
     const people = await ctx.db.query("people").collect();
     const teams = await ctx.db.query("teams").collect();
     const teamById = new Map(teams.map((t) => [t._id, t.name]));
+    const visitorRows = await ctx.db.query("visitors").collect();
+    const contactByPerson = new Map(
+      visitorRows.map((r) => [r.personId, r]),
+    );
     return people
-      .map((p) => ({
-        _id: p._id,
-        name: p.name,
-        displayName: personDisplayName(p),
-        givenName: p.givenName ?? "",
-        surname: p.surname ?? "",
-        gender: genderForApi(p.gender),
-        teamId: p.teamId,
-        teamName: p.teamId ? teamById.get(p.teamId) : undefined,
-        status: statusForApi(p.status),
-        createdAt: p.createdAt,
-      }))
+      .map((p) => {
+        const vrow = contactByPerson.get(p._id);
+        return {
+          _id: p._id,
+          name: p.name,
+          displayName: personDisplayName(p),
+          givenName: p.givenName ?? "",
+          surname: p.surname ?? "",
+          gender: genderForApi(p.gender),
+          teamId: p.teamId,
+          teamName: p.teamId ? teamById.get(p.teamId) : undefined,
+          status: statusForApi(p.status),
+          createdAt: p.createdAt,
+          phone: vrow?.phone,
+          email: vrow?.email,
+          suburb: vrow?.suburb,
+          contactByEmail: vrow?.contactByEmail ?? false,
+          contactByPhone: vrow?.contactByPhone ?? false,
+        };
+      })
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
   },
 });
@@ -234,6 +251,10 @@ export const updatePerson = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAdminSession(ctx, args.sessionToken);
+    const existing = await ctx.db.get(args.personId);
+    if (!existing) {
+      throw new Error("Person not found");
+    }
     const name = buildStoredName(args.givenName, args.surname);
     const givenName = args.givenName.trim();
     const surname = args.surname.trim();
@@ -260,6 +281,13 @@ export const removePerson = mutation({
       .collect();
     for (const r of records) {
       await ctx.db.delete(r._id);
+    }
+    const visitor = await ctx.db
+      .query("visitors")
+      .withIndex("by_person", (q) => q.eq("personId", args.personId))
+      .first();
+    if (visitor) {
+      await ctx.db.delete(visitor._id);
     }
     await ctx.db.delete(args.personId);
     return null;

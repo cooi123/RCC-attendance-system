@@ -47,6 +47,27 @@ export default defineSchema({
     .index("by_name", ["name"])
     .index("by_check_in_token", ["checkInToken"]),
 
+  /** Visitor contact details keyed by person (NV/RV/VO roster). */
+  visitors: defineTable({
+    personId: v.id("people"),
+    phone: v.optional(v.string()),
+    email: v.optional(v.string()),
+    suburb: v.optional(v.string()),
+    /** Visitor opted in to follow-up via email. */
+    contactByEmail: v.optional(v.boolean()),
+    /** Visitor opted in to follow-up via phone. */
+    contactByPhone: v.optional(v.boolean()),
+    /** Visitor intake details from the latest submission. */
+    visitorVisitDetails: v.optional(
+      v.object({
+        familyWithMe: v.optional(v.string()),
+        knowMoreAbout: v.optional(v.string()),
+        checklist: v.optional(v.array(v.string())),
+      }),
+    ),
+    updatedAt: v.number(),
+  }).index("by_person", ["personId"]),
+
   attendance: defineTable({
     personId: v.id("people"),
     dateKey: v.string(),
@@ -64,6 +85,14 @@ export default defineSchema({
     ),
     /** Optional detail when kind is `other`. */
     absenceNote: v.optional(v.string()),
+    /** Legacy: visitor intake details now live on `visitors.visitorVisitDetails`. */
+    visitorVisitDetails: v.optional(
+      v.object({
+        familyWithMe: v.optional(v.string()),
+        knowMoreAbout: v.optional(v.string()),
+        checklist: v.optional(v.array(v.string())),
+      }),
+    ),
   })
     .index("by_person", ["personId"])
     .index("by_date", ["dateKey"])

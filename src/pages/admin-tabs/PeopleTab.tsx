@@ -36,17 +36,21 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { TabsContent } from "@/components/ui/tabs";
+import {
+  VisitorIntakeForm,
+  type VisitorIntakeValues,
+} from "@/components/VisitorIntakeForm";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import {
   isMemberCategory,
+  isVisitorCategory,
   PERSON_GENDER_LABELS,
   PERSON_ROSTER_STATUS_LABELS,
   PERSON_ROSTER_STATUS_OPTIONS,
   type PersonGender,
   type PersonRosterStatus,
 } from "@/lib/personRoster";
-import { formatTodayKey } from "@/lib/utils";
 import {
   MEMBER_IMPORT_CSV_SAMPLE,
   parseMemberImportCsv,
@@ -67,6 +71,7 @@ export function PeopleTab({ sessionToken }: Props) {
   const removePerson = useMutation(api.people.removePerson);
   const importMembers = useMutation(api.people.importMembers);
   const setAttendanceOverride = useMutation(api.attendance.setAttendanceOverride);
+  const upsertVisitorContact = useMutation(api.visitors.upsertVisitorContact);
 
   // ── Import dialog ──
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -143,6 +148,11 @@ export function PeopleTab({ sessionToken }: Props) {
   const [pGender, setPGender] = useState<PersonGender>("male");
   const [pTeam, setPTeam] = useState<string>("__none__");
   const [pStatus, setPStatus] = useState<PersonRosterStatus>("NV");
+  const [pPhone, setPPhone] = useState("");
+  const [pEmail, setPEmail] = useState("");
+  const [pSuburb, setPSuburb] = useState("");
+  const [pContactByPhone, setPContactByPhone] = useState(false);
+  const [pContactByEmail, setPContactByEmail] = useState(false);
 
   function openAddPerson() {
     setEditingId(null);
@@ -151,6 +161,11 @@ export function PeopleTab({ sessionToken }: Props) {
     setPGender("male");
     setPTeam("__none__");
     setPStatus("NV");
+    setPPhone("");
+    setPEmail("");
+    setPSuburb("");
+    setPContactByPhone(false);
+    setPContactByEmail(false);
     setPersonDialogOpen(true);
   }
 
@@ -163,11 +178,17 @@ export function PeopleTab({ sessionToken }: Props) {
     setPGender(p.gender);
     setPTeam(p.teamId ?? "__none__");
     setPStatus(p.status);
+    setPPhone(p.phone?.trim() ?? "");
+    setPEmail(p.email?.trim() ?? "");
+    setPSuburb(p.suburb?.trim() ?? "");
+    setPContactByPhone(p.contactByPhone);
+    setPContactByEmail(p.contactByEmail);
     setPersonDialogOpen(true);
   }
 
   async function savePerson() {
     const teamId = pTeam === "__none__" ? undefined : (pTeam as Id<"teams">);
+    let personId: Id<"people">;
     if (editingId) {
       await updatePerson({
         sessionToken,
@@ -178,8 +199,9 @@ export function PeopleTab({ sessionToken }: Props) {
         teamId,
         status: pStatus,
       });
+      personId = editingId;
     } else {
-      await createPerson({
+      personId = await createPerson({
         sessionToken,
         givenName: pGivenName,
         surname: pSurname,
@@ -188,44 +210,117 @@ export function PeopleTab({ sessionToken }: Props) {
         status: pStatus,
       });
     }
+    if (isVisitorCategory(pStatus)) {
+      await upsertVisitorContact({
+        sessionToken,
+        personId,
+        phone: pPhone.trim() ? pPhone : undefined,
+        email: pEmail.trim() ? pEmail : undefined,
+        suburb: pSuburb.trim() ? pSuburb : undefined,
+        contactByPhone: pContactByPhone,
+        contactByEmail: pContactByEmail,
+      });
+    } else {
+      await upsertVisitorContact({ sessionToken, personId });
+    }
     setPersonDialogOpen(false);
   }
 
-  // ── Add visitor today dialog ──
-  const VISITOR_STATUSES: PersonRosterStatus[] = ["NV", "RV", "VO"];
+  // ── Add visitor dialog ──
   const [visitorDialogOpen, setVisitorDialogOpen] = useState(false);
-  const [vGivenName, setVGivenName] = useState("");
-  const [vSurname, setVSurname] = useState("");
-  const [vGender, setVGender] = useState<PersonGender>("male");
-  const [vStatus, setVStatus] = useState<PersonRosterStatus>("NV");
+  const [visitorFormNonce, setVisitorFormNonce] = useState(0);
   const [vLoading, setVLoading] = useState(false);
 
   function openAddVisitorToday() {
-    setVGivenName("");
-    setVSurname("");
-    setVGender("male");
-    setVStatus("NV");
     setVLoading(false);
+    setVisitorFormNonce((n) => n + 1);
     setVisitorDialogOpen(true);
   }
 
-  async function saveVisitorToday() {
-    if (!vGivenName.trim()) return;
+  function normalizedPersonKey(givenName: string, surname: string): string {
+    return [givenName.trim(), surname.trim()]
+      .filter((x) => x.length > 0)
+      .join(" ")
+      .toLowerCase();
+  }
+
+  async function saveVisitorToday(values: VisitorIntakeValues) {
+    if (!values.givenName.trim()) return;
+    const dateKeyOk = /^\d{4}-\d{2}-\d{2}$/.test(values.dateKey);
+    if (!dateKeyOk) return;
     setVLoading(true);
     try {
       const personId = await createPerson({
         sessionToken,
-        givenName: vGivenName,
-        surname: vSurname,
-        gender: vGender,
-        status: vStatus,
+        givenName: values.givenName,
+        surname: values.surname,
+        gender: values.gender,
+        status: values.visitorStatus,
+      });
+      await upsertVisitorContact({
+        sessionToken,
+        personId,
+        phone: values.phone.trim() ? values.phone : undefined,
+        email: values.email.trim() ? values.email : undefined,
+        suburb: values.suburb.trim() ? values.suburb : undefined,
+        contactByPhone: values.contactByPhone,
+        contactByEmail: values.contactByEmail,
+        visitorVisitDetails:
+          values.familyWithMe.trim().length > 0 || values.checklist.length > 0
+            ? {
+                familyWithMe: values.familyWithMe.trim() || undefined,
+                checklist:
+                  values.checklist.length > 0 ? values.checklist : undefined,
+              }
+            : undefined,
       });
       await setAttendanceOverride({
         sessionToken,
         personId,
-        dateKey: formatTodayKey(),
+        dateKey: values.dateKey,
         status: "present",
       });
+
+      const peopleList = people ?? [];
+      const existingByName = new Map(
+        peopleList.map((p) => [
+          normalizedPersonKey(p.givenName, p.surname),
+          p._id,
+        ]),
+      );
+      existingByName.set(
+        normalizedPersonKey(values.givenName, values.surname),
+        personId,
+      );
+
+      const seenFamily = new Set<string>();
+      for (const fm of values.familyMembers) {
+        const key = normalizedPersonKey(fm.givenName, fm.surname);
+        if (!key || key === normalizedPersonKey(values.givenName, values.surname)) {
+          continue;
+        }
+        if (seenFamily.has(key)) continue;
+        seenFamily.add(key);
+
+        let familyPersonId = existingByName.get(key);
+        if (!familyPersonId) {
+          familyPersonId = await createPerson({
+            sessionToken,
+            givenName: fm.givenName,
+            surname: fm.surname,
+            gender: values.gender,
+            status: values.visitorStatus,
+          });
+          existingByName.set(key, familyPersonId);
+        }
+
+        await setAttendanceOverride({
+          sessionToken,
+          personId: familyPersonId,
+          dateKey: values.dateKey,
+          status: "present",
+        });
+      }
       setVisitorDialogOpen(false);
     } finally {
       setVLoading(false);
@@ -264,7 +359,7 @@ export function PeopleTab({ sessionToken }: Props) {
                 onClick={openAddVisitorToday}
               >
                 <UserPlus className="h-4 w-4" />
-                Add visitor today
+                Add visitor
               </Button>
               <Button type="button" onClick={openAddPerson}>
                 Add person
@@ -464,94 +559,32 @@ export function PeopleTab({ sessionToken }: Props) {
 
       {/* ── Add visitor today dialog ── */}
       <Dialog open={visitorDialogOpen} onOpenChange={setVisitorDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Add visitor today</DialogTitle>
+            <DialogTitle>Add visitor</DialogTitle>
             <DialogDescription>
-              Creates a new visitor profile and marks them as attending today.
+              Creates a visitor profile, saves contact details on their profile,
+              and marks them present on the date you choose. Visit-specific notes
+              are stored with that attendance record.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="vgiven">Given name</Label>
-                <Input
-                  id="vgiven"
-                  value={vGivenName}
-                  onChange={(e) => setVGivenName(e.target.value)}
-                  autoComplete="given-name"
-                  autoFocus
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="vsurname">Surname</Label>
-                <Input
-                  id="vsurname"
-                  value={vSurname}
-                  onChange={(e) => setVSurname(e.target.value)}
-                  autoComplete="family-name"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Gender</Label>
-              <Select
-                value={vGender}
-                onValueChange={(v) => setVGender(v as PersonGender)}
+          <VisitorIntakeForm
+            resetSignal={visitorFormNonce}
+            idPrefix="admin-v"
+            submitLabel="Add & mark attending"
+            loading={vLoading}
+            leadingFooter={
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setVisitorDialogOpen(false)}
+                disabled={vLoading}
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(PERSON_GENDER_LABELS) as PersonGender[]).map((g) => (
-                    <SelectItem key={g} value={g}>
-                      {PERSON_GENDER_LABELS[g]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Visitor type</Label>
-              <Select
-                value={vStatus}
-                onValueChange={(v) => setVStatus(v as PersonRosterStatus)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {VISITOR_STATUSES.map((code) => (
-                    <SelectItem key={code} value={code}>
-                      {PERSON_ROSTER_STATUS_LABELS[code]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setVisitorDialogOpen(false)}
-              disabled={vLoading}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void saveVisitorToday()}
-              disabled={vLoading || !vGivenName.trim()}
-            >
-              {vLoading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                "Add & mark attending"
-              )}
-            </Button>
-          </DialogFooter>
+                Cancel
+              </Button>
+            }
+            onSubmit={(values) => void saveVisitorToday(values)}
+          />
         </DialogContent>
       </Dialog>
 
@@ -639,7 +672,7 @@ export function PeopleTab({ sessionToken }: Props) {
             <Button variant="outline" onClick={() => setPersonDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={savePerson} disabled={!pGivenName.trim()}>
+            <Button onClick={() => void savePerson()} disabled={!pGivenName.trim()}>
               Save
             </Button>
           </DialogFooter>
